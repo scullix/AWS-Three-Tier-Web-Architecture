@@ -17,7 +17,7 @@ In this architecture, a public-facing Application Load Balancer forwards client 
 
 In this section, we will be downloading the code from Github and upload it to S3 so our instances can access it. We will also create an AWS Identity and Access Management EC2 role so we can use AWS Systems Manager Session Manager to connect to our instances securely and without needing to create SSH key pairs.
 
-- Download Code from Github : git clone https://github.com/aws-samples/aws-three-tier-web-architecture-workshop.git
+- Download Code from Github : git clone https://github.com/akashzakde/AWS-Three-Tier-Web-Architecture.git
 - Create S3 Bucket with unique name
 - Create IAM EC2 Instance Role and add add AmazonSSMManagedInstanceCore & AmazonS3ReadOnlyAccess policies to the role .
 
