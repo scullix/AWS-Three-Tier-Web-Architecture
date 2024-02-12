@@ -102,7 +102,7 @@ VARCHAR(100), PRIMARY KEY(id));`
 - Verify that your data was added by executing the following command: `SELECT * FROM transactions;`
 - When finished, just type exit and hit enter to exit the MySQL client.
 
-  ### Configure App Instance
+### Configure App Instance
 
   - The first thing we will do is update our database credentials for the app tier. To do this, open the application-code/app-tier/DbConfig.js file from the github repo in your favorite text editor on your computer. You’ll see empty strings for the hostname, user, password and database. Fill this in with the credentials you configured for your database, the writer endpoint of your database as the hostname, and webappdb for the database. Save the file.**NOTE: This is NOT considered a best practice, and is done for the simplicity of the lab. Moving these credentials to a more suitable place like Secrets Manager is left as an extension for this workshop.**
   - Upload the app-tier folder to the S3 bucket that you created in part 0.
@@ -130,3 +130,123 @@ Now let's run a couple tests to see if our app is configured correctly and can r
 - You should see a response containing the test data we added earlier: `{"result":[{"id":1,"amount":400,"description":"groceries"},{"id":2,"amount":100,"description":"class"},{"id":3,"amount":200,"description":"other groceries"},{"id":4,"amount":10,"description":"brownies"}]}`
 - If you see both of these responses, then your networking, security, database and app configurations are correct.
 - Congrats! Your app layer is fully configured and ready to go.
+
+## Part 4: Internal Load Balancing and Auto Scaling
+
+In this section of the workshop we will create an Amazon Machine Image (AMI) of the app tier instance we just created, and use that to set up autoscaling with a load balancer in order to make this tier highly available, this will involve following steps :-
+
+- Create an AMI of our App Tier
+- Create a Launch Template
+- Configure Autoscaling
+- Deploy Internal Load Balancer
+
+### App Tier AMI
+
+- Navigate to Instances on the left hand side of the EC2 dashboard. Select the app tier instance we created and under Actions select Image and templates. Click Create Image.
+- Give the image a name and description and then click Create image. This will take a few minutes, but if you want to monitor the status of image creation you can see it by clicking AMIs under Images on the left hand navigation panel of the EC2 dashboard.
+
+### Target Group
+
+- While the AMI is being created, we can go ahead and create our target group to use with the load balancer. On the EC2 dashboard navigate to Target Groups under Load Balancing on the left hand side. Click on Create Target Group.
+- The purpose of forming this target group is to use with our load blancer so it may balance traffic across our private app tier instances. Select Instances as the target type and give it a name.
+- Then, set the protocol to HTTP and the port to 4000. Remember that this is the port our Node.ja app is running on. Select the VPC we've been using thus far, and then change the health check path to be /health. This is the health check endpoint of our app. Click Next.
+- We are NOT going to register any targets for now, so just skip that step and create the target group.
+
+### Internal Load Balancer
+
+- On the left hand side of the EC2 dashboard select Load Balancers under Load Balancing and click Create Load Balancer.
+- We'll be using an Application Load Balancer for our HTTP traffic so click the create button for that option.
+- After giving the load balancer a name, be sure to select internal since this one will not be public facing, but rather it will route traffic from our web tier to the app tier.
+- Select the correct network configuration for VPC and private subnets.
+- Select the security group we created for this internal ALB. Now, this ALB will be listening for HTTP traffic on port 80. It will be forwarding the traffic to our target group that we just created, so select it from the dropdown, and create the load balancer.
+
+### Launch Template
+
+- Before we configure Auto Scaling, we need to create a Launch template with the AMI we created earlier. On the left side of the EC2 dashboard navigate to Launch Template under Instances and click Create Launch Template.
+- Name the Launch Template, and then under Application and OS Images include the app tier AMI you created.
+- Under Instance Type select t2.micro. For Key pair and Network Settings don't include it in the template. We don't need a key pair to access our instances and we'll be setting the network information in the autoscaling group.
+- Set the correct security group for our app tier, and then under Advanced details use the same IAM instance profile we have been using for our EC2 instances.
+
+### Auto Scaling
+
+- We will now create the Auto Scaling Group for our app instances. On the left side of the EC2 dashboard navigate to Auto Scaling Groups under Auto Scaling and click Create Auto Scaling group.
+- Give your Auto Scaling group a name, and then select the Launch Template we just created and click next.
+- On the Choose instance launch options page set your VPC, and the private instance subnets for the app tier and continue to step 3.
+- For this next step, attach this Auto Scaling Group to the Load Balancer we just created by selecting the existing load balancer's target group from the dropdown. Then, click next.
+- For Configure group size and scaling policies, set desired, minimum and maximum capacity to 2. Click skip to review and then Create Auto Scaling Group.
+- You should now have your internal load balancer and autoscaling group configured correctly. You should see the autoscaling group spinning up 2 new app tier instances. If you wanted to test if this is working correctly, you can delete one of your new instances manually and wait to see if a new instance is booted up to replace it. **NOTE: Your original app tier instance is excluded from the ASG so you will see 3 instances in the EC2 dashboard. You can delete your original instance that you used to generate the app tier AMI but it's recommended to keep it around for troubleshooting purposes.**
+
+## Part 5: Web Tier Instance Deployment
+In this section we will deploy an EC2 instance for the web tier and make all necessary software configurations for the NGINX web server and React.js website.this will involved following tasks , 
+ - Update NGINX Configuration Files
+ - Create Web Tier Instance
+ - Configure Software Stack
+
+### Update Config File
+
+- Before we create and configure the web instances, open up the application-code/nginx.conf file from the repo we downloaded. Scroll down to line 58 and replace [INTERNAL-LOADBALANCER-DNS] with your internal load balancer’s DNS entry. You can find this by navigating to your internal load balancer's details page.
+- Then, upload this file and the application-code/web-tier folder to the s3 bucket you created for this lab.
+
+### Web Instance Deployment
+- Follow the same instance creation instructions we used for the App Tier instance in Part 3: App Tier Instance Deployment, with the exception of the subnet. We will be provisioning this instance in one of our public subnets. Make sure to select the correct network components, security group, and IAM role. This time, auto-assign a public ip on the Configure Instance Details page. Remember to tag the instance with a name so we can identify it more easily.
+- Then at the end, proceed without a key pair for this instance.
+
+### Connect to Instance
+- Follow the same steps you used to connect to the app instance and change the user to ec2-user. Test connectivity here via ping as well since this instance should have internet connectivity: `1) sudo -su ec2-user` , `2) ping 8.8.8.8` **Note: If you don't see a transfer of packets then you'll need to verify your route tables attached to the subnet that your instance is deployed in.**
+
+### Configure Web Instance
+- We now need to install all of the necessary components needed to run our front-end application. Again, start by installing NVM and node : `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash;
+source ~/.bashrc;
+nvm install 16;
+nvm use 16`
+- Now we need to download our web tier code from our s3 bucket: `cd ~/; aws s3 cp s3://BUCKET_NAME/web-tier/ web-tier --recursive`.
+- Navigate to the web-layer folder and create the build folder for the react app so we can serve our code: `cd ~/web-tier; npm install ; npm run build`
+- NGINX can be used for different use cases like load balancing, content caching etc, but we will be using it as a web server that we will configure to serve our application on port 80, as well as help direct our API calls to the internal load balancer. : `sudo amazon-linux-extras install nginx1 -y`
+- We will now have to configure NGINX. Navigate to the Nginx configuration file with the following commands and list the files in the directory: `cd /etc/nginx; ls`
+- You should see an nginx.conf file. We’re going to delete this file and use the one we uploaded to s3. Replace the bucket name in the command below with the one you created for this workshop: `sudo rm nginx.conf ; sudo aws s3 cp s3://BUCKET_NAME/nginx.conf .`
+- Then, restart Nginx with the following command: `sudo service nginx restart`
+- To make sure Nginx has permission to access our files execute this command: `chmod -R 755 /home/ec2-user`
+- And then to make sure the service starts on boot, run this command: `sudo chkconfig nginx on`
+- Now when you plug in the public IP of your web tier instance, you should see your website, which you can find on the Instance details page on the EC2 dashboard. If you have the database connected and working correctly, then you will also see the database working. You’ll be able to add data. Careful with the delete button, that will clear all the entries in your database.
+
+## Part 6: External Load Balancer and Auto Scaling
+
+In this section of the workshop we will create an Amazon Machine Image (AMI) of the web tier instance we just created, and use that to set up autoscaling with an external facing load balancer in order to make this tier highly available.we will cover below tasks :
+- Create an AMI of our Web Tier
+- Create a Launch Template
+- Configure Auto Scaling
+- Deploy External Load Balancer
+
+### Web Tier AMI
+- Navigate to Instances on the left hand side of the EC2 dashboard. Select the web tier instance we created and under Actions select Image and templates. Click Create Image.
+- Give the image a name and description and then click Create image. This will take a few minutes, but if you want to monitor the status of image creation you can see it by clicking AMIs under Images on the left hand navigation panel of the EC2 dashboard.
+
+### Target Group
+- While the AMI is being created, we can go ahead and create our target group to use with the load balancer. On the EC2 dashboard navigate to Target Groups under Load Balancing on the left hand side. Click on Create Target Group.
+- The purpose of forming this target group is to use with our load blancer so it may balance traffic across our public web tier instances. Select Instances as the target type and give it a name.
+- Then, set the protocol to HTTP and the port to 80. Remember this is the port NGINX is listening on. Select the VPC we've been using thus far, and then change the health check path to be /health. Click Next.
+- We are NOT going to register any targets for now, so just skip that step and create the target group.
+
+### Internet Facing Load Balancer
+- On the left hand side of the EC2 dashboard select Load Balancers under Load Balancing and click Create Load Balancer.
+- We'll be using an Application Load Balancer for our HTTP traffic so click the create button for that option.
+- After giving the load balancer a name, be sure to select internet facing since this one will not be public facing, but rather it will route traffic from our web tier to the app tier.
+- Select the correct network configuration for VPC and public subnets.
+- Select the security group we created for this internal ALB. Now, this ALB will be listening for HTTP traffic on port 80. It will be forwarding the traffic to our target group that we just created, so select it from the dropdown, and create the load balancer.
+
+### Launch Template
+- Before we configure Auto Scaling, we need to create a Launch template with the AMI we created earlier. On the left side of the EC2 dashboard navigate to Launch Template under Instances and click Create Launch Template.
+- Name the Launch Template, and then under Application and OS Images include the app tier AMI you created.
+- Under Instance Type select t2.micro. For Key pair and Network Settings don't include it in the template. We don't need a key pair to access our instances and we'll be setting the network information in the autoscaling group.
+- Set the correct security group for our web tier, and then under Advanced details use the same IAM instance profile we have been using for our EC2 instances.
+
+### Auto Scaling
+- We will now create the Auto Scaling Group for our web instances. On the left side of the EC2 dashboard navigate to Auto Scaling Groups under Auto Scaling and click Create Auto Scaling group.
+- Give your Auto Scaling group a name, and then select the Launch Template we just created and click next.
+- On the Choose instance launch options page set your VPC, and the public subnets for the web tier and continue to step 3.
+- For this next step, attach this Auto Scaling Group to the Load Balancer we just created by selecting the existing web tier load balancer's target group from the dropdown. Then, click next.
+- For Configure group size and scaling policies, set desired, minimum and maximum capacity to 2. Click skip to review and then Create Auto Scaling Group.
+- You should now have your external load balancer and autoscaling group configured correctly. You should see the autoscaling group spinning up 2 new web tier instances. If you wanted to test if this is working correctly, you can delete one of your new instances manually and wait to see if a new instance is booted up to replace it. To test if your entire architecture is working, navigate to your external facing loadbalancer, and plug in the DNS name into your browser.**NOTE: Again, your original web tier instance is excluded from the ASG so you will see 3 instances in the EC2 dashboard. You can delete your original instance that you used to generate the web tier AMI but it's recommended to keep it around for troubleshooting purposes.**
+
+# Congrats ! You have successfully implemented a 3 tier web architechture on AWS . 
+
