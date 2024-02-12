@@ -7,7 +7,8 @@ In this architecture, a public-facing Application Load Balancer forwards client 
 ![3TierArch](https://github.com/akashzakde/AWS-Three-Tier-Web-Architecture/assets/64258131/5be30c58-2a88-46f1-8cc4-21b2be3ead88)
 
 ## Prerequisites: 
-- AWS Credentials with necessary access
+- AWS free tier account login
+- AWS IAM user Credentials with access & secret key 
 - AWS CLI tool
 - Git
 
